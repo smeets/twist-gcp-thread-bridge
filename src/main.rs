@@ -57,13 +57,13 @@ async fn main() -> tide::Result<()> {
         Ok(res)
     }));
 
-    app.at("/twist")
+    app.at("/twist")./
         .at("/on_configure")
         .get(twist_configure)
         .at("/outgoing")
         .post(twist_outgoing);
     app.at("/gcp/webhooks/:id").post(gcp_webhook);
-    app.listen("127.0.0.1:8080").await?;
+    app.listen("0.0.0.0:9999").await?;
     Ok(())
 }
 
