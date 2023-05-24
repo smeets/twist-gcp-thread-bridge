@@ -57,7 +57,7 @@ async fn main() -> tide::Result<()> {
         Ok(res)
     }));
 
-    app.at("/twist").
+    app.at("/twist")
         .at("/on_configure")
         .get(twist_configure)
         .at("/outgoing")
