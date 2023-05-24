@@ -57,11 +57,8 @@ async fn main() -> tide::Result<()> {
         Ok(res)
     }));
 
-    app.at("/twist")
-        .at("/on_configure")
-        .get(twist_configure)
-        .at("/outgoing")
-        .post(twist_outgoing);
+    app.at("/twist/on_configure").get(twist_configure);
+    app.at("/twist/outgoing").post(twist_outgoing);
     app.at("/gcp/webhooks/:id").post(gcp_webhook);
     app.listen("0.0.0.0:9999").await?;
     Ok(())
@@ -69,8 +66,11 @@ async fn main() -> tide::Result<()> {
 
 async fn gcp_webhook(mut req: Request<()>) -> tide::Result {
     let webhook_id = req.param("id")?.to_string();
-    let x: GoogleNotificationWebhook = req.body_json().await?;
+    let j = req.body_string().await?;
     tide::log::info!("webhook received {}", webhook_id);
+    tide::log::info!("payload {}", j);
+
+    // let x: GoogleNotificationWebhook = req.body_json().await?;
     Ok("OK".into())
 }
 
@@ -124,11 +124,16 @@ async fn twist_configure(mut req: Request<()>) -> tide::Result {
         content: String,
     }
 
-    let mut p = tide::http::Request::post(x.post_data_url.as_str());
-    p.set_content_type(mime::JSON);
-    p.set_body(Body::from_json(&Comment {
-        content: "HELLO".into(),
-    })?);
+    let res = reqwest::Client::new()
+        .request(reqwest::Method::POST, x.post_data_url)
+        .body(serde_json::to_vec(&Comment{
+            content: "HEJ!".into(),
+        })?)
+        .header("Content-Type", "application/json")
+        .send().await?;
+
+    tide::log::info!("body post {}", res.status());
+
 
     Ok("OK".into())
 }
