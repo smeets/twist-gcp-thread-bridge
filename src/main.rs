@@ -124,13 +124,13 @@ async fn twist_configure(mut req: Request<()>) -> tide::Result {
         content: String,
     }
 
-    let res = reqwest::Client::new()
+    let res = reqwest::blocking::Client::new()
         .request(reqwest::Method::POST, x.post_data_url)
         .body(serde_json::to_vec(&Comment{
             content: "HEJ!".into(),
         })?)
         .header("Content-Type", "application/json")
-        .send().await?;
+        .send().unwrap();
 
     tide::log::info!("body post {}", res.status());
 
