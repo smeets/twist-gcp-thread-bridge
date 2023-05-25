@@ -144,12 +144,17 @@ struct EventInfo {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-    let file = FileStore::new("db.json");
+    tide::log::start();
+
+    let mut file = FileStore::new("db.json");
+    file.load();
+    file.twist_integrations.iter().for_each(
+        |x| tide::log::info!("> {} {}", x.secret_id, x.configuration.user_name)
+    );
     let state = State::new("tuta.smeten.se", Box::new(file));
 
     let mut app = tide::with_state(state);
 
-    tide::log::start();
 
     app.with(tide::utils::After(|mut res: tide::Response| async {
         if let Some(err) = res.error() {
@@ -170,8 +175,8 @@ async fn main() -> tide::Result<()> {
 }
 
 async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
-    let webhook_id = req.param("id")?.to_string();
     let j = req.body_string().await?;
+    let webhook_id = req.param("id")?;
 
     if let Ok(x) = serde_json::from_str::<GoogleNotificationWebhook>(j.as_str()) {
         tide::log::info!("gcp webhook: notification {}", webhook_id);
@@ -182,13 +187,15 @@ async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
     }
 
     let store = req.state().store.lock().unwrap();
-    if let Some(twist) = store.find_twist_thread(webhook_id) {
+    if let Some(twist) = store.find_twist_thread(webhook_id.to_string()) {
         let res = reqwest::blocking::Client::new()
             .request(reqwest::Method::POST, twist.configuration.post_data_url)
             .body(j)
             .header("Content-Type", "application/json")
             .send()
             .unwrap();
+    } else {
+        tide::log::warn!("no twist integration found with id {}", webhook_id);
     }
 
     Ok("OK".into())
