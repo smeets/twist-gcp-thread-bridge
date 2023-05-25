@@ -190,7 +190,9 @@ async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
     if let Some(twist) = store.find_twist_thread(webhook_id.to_string()) {
         let res = reqwest::blocking::Client::new()
             .request(reqwest::Method::POST, twist.configuration.post_data_url)
-            .body(j)
+            .body(serde_json::to_string(&json!({
+                "content": format!("```\n{}\n```", j),
+            }))?)
             .header("Content-Type", "application/json")
             .send()
             .unwrap();
