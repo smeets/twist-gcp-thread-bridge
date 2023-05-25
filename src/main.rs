@@ -103,6 +103,12 @@ struct TwistOnConfigure {
     user_name: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct GoogleWebhookPing {
+    version: String,
+    incident: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize)]
 struct GoogleNotificationWebhook {
     version: String,
@@ -166,10 +172,25 @@ async fn main() -> tide::Result<()> {
 async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
     let webhook_id = req.param("id")?.to_string();
     let j = req.body_string().await?;
-    tide::log::info!("webhook received {}", webhook_id);
-    tide::log::info!("payload {}", j);
 
-    // let x: GoogleNotificationWebhook = req.body_json().await?;
+    if let Ok(x) = serde_json::from_str::<GoogleNotificationWebhook>(j.as_str()) {
+        tide::log::info!("gcp webhook: notification {}", webhook_id);
+    } else if let Ok(x) = serde_json::from_str::<GoogleWebhookPing>(j.as_str()) {
+        tide::log::info!("gcp webhook: ping {}", webhook_id);
+    } else {
+        tide::log::info!("payload {}", j);
+    }
+
+    let store = req.state().store.lock().unwrap();
+    if let Some(twist) = store.find_twist_thread(webhook_id) {
+        let res = reqwest::blocking::Client::new()
+            .request(reqwest::Method::POST, twist.configuration.post_data_url)
+            .body(j)
+            .header("Content-Type", "application/json")
+            .send()
+            .unwrap();
+    }
+
     Ok("OK".into())
 }
 
