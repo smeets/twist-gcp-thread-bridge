@@ -8,6 +8,7 @@ trait SaveLoad {
 trait RegisterFind {
     fn register_twist_thread(&mut self, cfg: TwistOnConfigure);
     fn find_twist_thread(&self, secret_id: String) -> Option<TwistIntegration>;
+    fn unregister_twist_thread(self: &mut Self, install_id: String);
 }
 
 struct FileStore {
@@ -50,6 +51,17 @@ impl RegisterFind for FileStore {
         self.save();
     }
 
+    fn unregister_twist_thread(self: &mut Self, install_id: String) {
+        if let Some(idx) = self
+            .twist_integrations
+            .iter()
+            .position(|x| x.secret_id == install_id)
+        {
+            self.twist_integrations.remove(idx);
+            self.save();
+        }
+    }
+
     fn find_twist_thread(&self, secret_id: String) -> Option<TwistIntegration> {
         if let Some(twist) = self
             .twist_integrations
@@ -62,9 +74,9 @@ impl RegisterFind for FileStore {
         }
     }
 }
-impl ApplicationStore for FileStore{}
+impl ApplicationStore for FileStore {}
 
-trait ApplicationStore: Send+SaveLoad+RegisterFind {}
+trait ApplicationStore: Send + SaveLoad + RegisterFind {}
 
 #[derive(Clone)]
 struct State {
@@ -73,7 +85,7 @@ struct State {
 }
 
 impl State {
-    pub fn new(name: &str, store: Box<dyn ApplicationStore>) -> Self{
+    pub fn new(name: &str, store: Box<dyn ApplicationStore>) -> Self {
         Self {
             server_name: name.to_string(),
             store: std::sync::Arc::new(std::sync::Mutex::new(store)),
@@ -181,6 +193,8 @@ async fn twist_outgoing(mut req: Request<State>) -> tide::Result {
     }
 
     let x: Outgoing = req.body_json().await?;
+    let mut state = req.state().store.lock().unwrap();
+
 
     Ok(match x.event_type.as_str() {
         "ping" => {
@@ -193,10 +207,15 @@ async fn twist_outgoing(mut req: Request<State>) -> tide::Result {
         }
         "message" => {
             let mut res = tide::Response::new(200);
-            res.body_json(&json!({"content": "ok!"}))?;
+            res.body_json(&json!({"content": ""}))?;
             res
         }
-        // "uninstall" => {}
+        "uninstall" => {
+            state.unregister_twist_thread(x.install_id.unwrap());
+            let mut res = tide::Response::new(200);
+            res.body_json(&json!({"content": "uninstalled!"}))?;
+            res
+        }
         _ => tide::Response::new(400),
     })
 }
