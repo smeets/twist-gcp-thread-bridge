@@ -104,42 +104,24 @@ struct TwistOnConfigure {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GoogleWebhookPing {
-    version: String,
-    incident: serde_json::Value,
+struct GoogleIncident {
+    documentation: AlertDocumentation,
+    policy_name: String,
+    resource: GoogleResource,
+    url: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct GoogleNotificationWebhook {
-    version: String,
-    subject: String,
-    group_info: GroupInfo,
-    exception_info: ExceptionInfo,
-    event_info: EventInfo,
-}
-
-#[derive(Debug, Deserialize)]
-struct GroupInfo {
-    project_id: String,
-    detail_link: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ExceptionInfo {
+#[derive(Debug, Serialize, Deserialize)]
+struct GoogleResource {
+    labels: serde_json::Value,
     #[serde(rename = "type")]
-    exception_type: String,
-    message: String,
+    resource_type: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct EventInfo {
-    log_message: String,
-    request_method: String,
-    request_url: String,
-    user_agent: String,
-    service: String,
-    version: String,
-    response_status: String,
+#[derive(Debug, Serialize, Deserialize)]
+struct AlertDocumentation {
+    content: String,
+    mime_type: String,
 }
 
 #[async_std::main]
@@ -148,13 +130,12 @@ async fn main() -> tide::Result<()> {
 
     let mut file = FileStore::new("db.json");
     file.load();
-    file.twist_integrations.iter().for_each(
-        |x| tide::log::info!("> {} {}", x.secret_id, x.configuration.user_name)
-    );
+    file.twist_integrations
+        .iter()
+        .for_each(|x| tide::log::info!("> {} {}", x.secret_id, x.configuration.user_name));
     let state = State::new("tuta.smeten.se", Box::new(file));
 
     let mut app = tide::with_state(state);
-
 
     app.with(tide::utils::After(|mut res: tide::Response| async {
         if let Some(err) = res.error() {
@@ -174,31 +155,51 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
+async fn twist_content(req: &mut Request<State>) -> Option<String> {
+    match req.body_string().await {
+        Ok(json) => match serde_json::from_str::<GoogleIncident>(&json) {
+            Ok(payload) => {
+                let svc = payload
+                    .resource
+                    .labels
+                    .as_object()
+                    .and_then(|labels| labels.get("container_name"))
+                    .and_then(|name_val| name_val.as_str())
+                    .map_or("unknown", |name| name);
+
+                Some(format!(
+                    "🚨 {alert} on {name} [incident]({incident_url})",
+                    alert = payload.policy_name,
+                    name = svc,
+                    incident_url = payload.url,
+                ))
+            }
+            Err(_) => Some(json.to_string()),
+        },
+        Err(_) => None,
+    }
+}
+
 async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
-    let j: serde_json::Value = req.body_json().await?;
-    let webhook_id = req.param("id")?;
-
-    if let Ok(x) = serde_json::from_value::<GoogleNotificationWebhook>(j.clone()) {
-        tide::log::info!("gcp webhook: notification {}", webhook_id);
-    } else if let Ok(x) = serde_json::from_value::<GoogleWebhookPing>(j.clone()) {
-        tide::log::info!("gcp webhook: ping {}", webhook_id);
-    } else {
-        tide::log::info!("payload {}", j);
-    }
-
-    let store = req.state().store.lock().unwrap();
-    if let Some(twist) = store.find_twist_thread(webhook_id.to_string()) {
-        let res = reqwest::blocking::Client::new()
-            .request(reqwest::Method::POST, twist.configuration.post_data_url)
-            .body(serde_json::to_string(&json!({
-                "content": format!("```\n{}\n```", serde_json::to_string_pretty(&j)?),
-            }))?)
-            .header("Content-Type", "application/json")
-            .send()
-            .unwrap();
-    } else {
-        tide::log::warn!("no twist integration found with id {}", webhook_id);
-    }
+    match twist_content(&mut req).await {
+        Some(reply) => {
+            let webhook_id = req.param("id")?;
+            let store = req.state().store.lock().unwrap();
+            if let Some(twist) = store.find_twist_thread(webhook_id.to_string()) {
+                reqwest::blocking::Client::new()
+                    .request(reqwest::Method::POST, twist.configuration.post_data_url)
+                    .body(serde_json::to_string(&json!({
+                        "content": reply,
+                    }))?)
+                    .header("Content-Type", "application/json")
+                    .send()
+                    .unwrap();
+            } else {
+                tide::log::warn!("no twist integration found with id {}", webhook_id);
+            }
+        }
+        None => {}
+    };
 
     Ok("OK".into())
 }
@@ -224,7 +225,6 @@ async fn twist_outgoing(mut req: Request<State>) -> tide::Result {
 
     let x: Outgoing = req.body_json().await?;
     let mut state = req.state().store.lock().unwrap();
-
 
     Ok(match x.event_type.as_str() {
         "ping" => {
