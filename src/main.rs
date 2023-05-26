@@ -168,14 +168,15 @@ async fn twist_content(req: &mut Request<State>) -> Option<String> {
                     .map_or("unknown", |name| name);
 
                 Some(format!(
-                    "🚨 {alert} on {name} [incident]({incident_url})",
+                    "🚨 {alert} on {name} [incident]({incident_url})\n\n{documentation}",
                     alert = payload.policy_name,
                     name = svc,
                     incident_url = payload.url,
+                    documentation = payload.documentation.content,
                 ))
             }
             Err(err) => Some(format!(
-                "Failed to parse due to `{error}`:\n\n```{payload}```",
+                "Failed to parse due to {error}:\n\n```\n{payload}\n```",
                 error = err,
                 payload = json.to_string()
             )),
