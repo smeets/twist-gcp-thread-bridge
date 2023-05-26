@@ -105,7 +105,7 @@ struct TwistOnConfigure {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GoogleIncident {
-    documentation: AlertDocumentation,
+    // documentation: AlertDocumentation,
     policy_name: String,
     resource: GoogleResource,
     url: String,
@@ -168,11 +168,10 @@ async fn twist_content(req: &mut Request<State>) -> Option<String> {
                     .map_or("unknown", |name| name);
 
                 Some(format!(
-                    "🚨 {alert} on {name} [incident]({incident_url})\n\n{documentation}",
+                    "🚨 {alert} on {name} [incident]({incident_url})}",
                     alert = payload.policy_name,
                     name = svc,
                     incident_url = payload.url,
-                    documentation = payload.documentation.content,
                 ))
             }
             Err(err) => Some(format!(
