@@ -175,12 +175,12 @@ async fn main() -> tide::Result<()> {
 }
 
 async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
-    let j = req.body_string().await?;
+    let j: serde_json::Value = req.body_json().await?;
     let webhook_id = req.param("id")?;
 
-    if let Ok(x) = serde_json::from_str::<GoogleNotificationWebhook>(j.as_str()) {
+    if let Ok(x) = serde_json::from_value::<GoogleNotificationWebhook>(j.clone()) {
         tide::log::info!("gcp webhook: notification {}", webhook_id);
-    } else if let Ok(x) = serde_json::from_str::<GoogleWebhookPing>(j.as_str()) {
+    } else if let Ok(x) = serde_json::from_value::<GoogleWebhookPing>(j.clone()) {
         tide::log::info!("gcp webhook: ping {}", webhook_id);
     } else {
         tide::log::info!("payload {}", j);
@@ -190,11 +190,8 @@ async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
     if let Some(twist) = store.find_twist_thread(webhook_id.to_string()) {
         let res = reqwest::blocking::Client::new()
             .request(reqwest::Method::POST, twist.configuration.post_data_url)
-            .body(serde_json::to_string_pretty(&json!({
-                "content": format!(
-"```
-{}
-```", j),
+            .body(serde_json::to_string(&json!({
+                "content": format!("```\n{}\n```", serde_json::to_string_pretty(&j)?),
             }))?)
             .header("Content-Type", "application/json")
             .send()
