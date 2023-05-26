@@ -93,8 +93,6 @@ impl State {
     }
 }
 
-//
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TwistOnConfigure {
     install_id: String,
@@ -104,12 +102,18 @@ struct TwistOnConfigure {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct GoogleWebhookPayload {
+    incident: GoogleIncident,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct GoogleIncident {
-    // documentation: AlertDocumentation,
+    documentation: AlertDocumentation,
     policy_name: String,
     resource: GoogleResource,
     url: String,
 }
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GoogleResource {
@@ -126,6 +130,11 @@ struct AlertDocumentation {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
+
+    // let data = async_std::fs::read_to_string("data.json").await?;
+    // let gcp: GoogleWebhookPayload = serde_json::from_str(&data)?;
+    // println!("{}", serde_json::to_string_pretty(&gcp)?);
+
     tide::log::start();
 
     let mut file = FileStore::new("db.json");
@@ -157,9 +166,10 @@ async fn main() -> tide::Result<()> {
 
 async fn twist_content(req: &mut Request<State>) -> Option<String> {
     match req.body_string().await {
-        Ok(json) => match serde_json::from_str::<GoogleIncident>(&json) {
+        Ok(json) => match serde_json::from_str::<GoogleWebhookPayload>(&json) {
             Ok(payload) => {
                 let svc = payload
+                .incident
                     .resource
                     .labels
                     .as_object()
@@ -168,10 +178,11 @@ async fn twist_content(req: &mut Request<State>) -> Option<String> {
                     .map_or("unknown", |name| name);
 
                 Some(format!(
-                    "🚨 {alert} on {name} [incident]({incident_url})",
-                    alert = payload.policy_name,
+                    "🚨 {alert} on {name} [incident]({incident_url})\n\n{docs}",
+                    alert = payload.incident.policy_name,
                     name = svc,
-                    incident_url = payload.url,
+                    incident_url = payload.incident.url,
+                    docs = payload.incident.documentation.content,
                 ))
             }
             Err(err) => Some(format!(
