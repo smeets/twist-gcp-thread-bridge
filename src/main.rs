@@ -168,7 +168,7 @@ async fn twist_content(req: &mut Request<State>) -> Option<String> {
                     .map_or("unknown", |name| name);
 
                 Some(format!(
-                    "🚨 {alert} on {name} [incident]({incident_url})}",
+                    "🚨 {alert} on {name} [incident]({incident_url})",
                     alert = payload.policy_name,
                     name = svc,
                     incident_url = payload.url,
