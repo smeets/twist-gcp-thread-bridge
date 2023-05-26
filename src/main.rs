@@ -174,7 +174,11 @@ async fn twist_content(req: &mut Request<State>) -> Option<String> {
                     incident_url = payload.url,
                 ))
             }
-            Err(_) => Some(json.to_string()),
+            Err(err) => Some(format!(
+                "Failed to parse due to `{error}`:\n\n```{payload}```",
+                error = err,
+                payload = json.to_string()
+            )),
         },
         Err(_) => None,
     }
