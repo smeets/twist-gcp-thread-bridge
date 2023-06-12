@@ -102,12 +102,31 @@ struct TwistOnConfigure {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GoogleWebhookPayload {
-    incident: GoogleIncident,
+#[serde(untagged)]
+enum GoogleWebhookPayload {
+    GoogleLogAlert(GoogleLogAlert),
+    GoogleUptimeAlert(GoogleUptimeAlert),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GoogleIncident {
+struct GoogleUptimeAlert {
+    incident: GoogleUptimeIncident,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoogleUptimeIncident {
+    policy_name: String,
+    url: String,
+    summary: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoogleLogAlert {
+incident: GoogleLogIncident,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoogleLogIncident {
     documentation: AlertDocumentation,
     policy_name: String,
     resource: GoogleResource,
@@ -131,9 +150,11 @@ struct AlertDocumentation {
 #[async_std::main]
 async fn main() -> tide::Result<()> {
 
-    // let data = async_std::fs::read_to_string("data.json").await?;
-    // let gcp: GoogleWebhookPayload = serde_json::from_str(&data)?;
-    // println!("{}", serde_json::to_string_pretty(&gcp)?);
+    // let data = async_std::fs::read_to_string("uptime.json").await?;
+    // if let Some(reply) = reply_to_json(data) {
+    //     println!("{}", reply);
+    // }
+    // return Ok(());
 
     tide::log::start();
 
@@ -164,33 +185,47 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
-async fn twist_content(req: &mut Request<State>) -> Option<String> {
-    match req.body_string().await {
-        Ok(json) => match serde_json::from_str::<GoogleWebhookPayload>(&json) {
-            Ok(payload) => {
-                let svc = payload
-                .incident
-                    .resource
-                    .labels
-                    .as_object()
-                    .and_then(|labels| labels.get("container_name"))
-                    .and_then(|name_val| name_val.as_str())
-                    .map_or("unknown", |name| name);
+fn reply_to_json(json: String) -> Option<String> {
+    match serde_json::from_str::<GoogleWebhookPayload>(&json) {
+            Ok(payload) => match payload {
+                GoogleWebhookPayload::GoogleLogAlert(alert) => {
+                    let svc = alert
+                    .incident
+                        .resource
+                        .labels
+                        .as_object()
+                        .and_then(|labels| labels.get("container_name"))
+                        .and_then(|name_val| name_val.as_str())
+                        .map_or("unknown", |name| name);
 
-                Some(format!(
-                    "🚨 {alert} on {name} [incident]({incident_url})\n\n{docs}",
-                    alert = payload.incident.policy_name,
-                    name = svc,
-                    incident_url = payload.incident.url,
-                    docs = payload.incident.documentation.content,
-                ))
-            }
+                    Some(format!(
+                        "🚨 {alert} on {name} [incident]({incident_url})\n\n{docs}",
+                        alert = alert.incident.policy_name,
+                        name = svc,
+                        incident_url = alert.incident.url,
+                        docs = alert.incident.documentation.content,
+                    ))
+                },
+                GoogleWebhookPayload::GoogleUptimeAlert(alert) => {
+                    Some(format!(
+                        "🚨 {alert} [incident]({incident_url})\n\n{summary}",
+                        alert = alert.incident.policy_name,
+                        incident_url = alert.incident.url,
+                        summary = alert.incident.summary,
+                    ))
+                },
+            },
             Err(err) => Some(format!(
                 "Failed to parse due to {error}:\n\n```\n{payload}\n```",
                 error = err,
                 payload = json.to_string()
             )),
-        },
+        }
+}
+
+async fn twist_content(req: &mut Request<State>) -> Option<String> {
+    match req.body_string().await {
+        Ok(json) => reply_to_json(json),
         Err(_) => None,
     }
 }
