@@ -118,6 +118,7 @@ struct GoogleUptimeIncident {
     policy_name: String,
     url: String,
     summary: String,
+    state: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -208,10 +209,11 @@ fn reply_to_json(json: String) -> Option<String> {
                 },
                 GoogleWebhookPayload::GoogleUptimeAlert(alert) => {
                     Some(format!(
-                        "🚨 {alert} [incident]({incident_url})\n\n{summary}",
+                        "{state} {alert} [incident]({incident_url})\n\n{summary}",
                         alert = alert.incident.policy_name,
                         incident_url = alert.incident.url,
                         summary = alert.incident.summary,
+                        state = if alert.incident.state == "open" { "🚨" } else { "🧯" },
                     ))
                 },
             },
