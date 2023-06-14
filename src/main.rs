@@ -123,7 +123,7 @@ struct GoogleUptimeIncident {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GoogleLogAlert {
-incident: GoogleLogIncident,
+    incident: GoogleLogIncident,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -133,7 +133,6 @@ struct GoogleLogIncident {
     resource: GoogleResource,
     url: String,
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GoogleResource {
@@ -150,7 +149,6 @@ struct AlertDocumentation {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-
     // let data = async_std::fs::read_to_string("uptime.json").await?;
     // if let Some(reply) = reply_to_json(data) {
     //     println!("{}", reply);
@@ -188,41 +186,43 @@ async fn main() -> tide::Result<()> {
 
 fn reply_to_json(json: String) -> Option<String> {
     match serde_json::from_str::<GoogleWebhookPayload>(&json) {
-            Ok(payload) => match payload {
-                GoogleWebhookPayload::GoogleLogAlert(alert) => {
-                    let svc = alert
+        Ok(payload) => match payload {
+            GoogleWebhookPayload::GoogleLogAlert(alert) => {
+                let svc = alert
                     .incident
-                        .resource
-                        .labels
-                        .as_object()
-                        .and_then(|labels| labels.get("container_name"))
-                        .and_then(|name_val| name_val.as_str())
-                        .map_or("unknown", |name| name);
+                    .resource
+                    .labels
+                    .as_object()
+                    .and_then(|labels| labels.get("container_name"))
+                    .and_then(|name_val| name_val.as_str())
+                    .map_or("unknown", |name| name);
 
-                    Some(format!(
-                        "🚨 {alert} on {name} [incident]({incident_url})\n\n{docs}",
-                        alert = alert.incident.policy_name,
-                        name = svc,
-                        incident_url = alert.incident.url,
-                        docs = alert.incident.documentation.content,
-                    ))
+                Some(format!(
+                    "🚨 {alert} on {name} [incident]({incident_url})\n\n{docs}",
+                    alert = alert.incident.policy_name,
+                    name = svc,
+                    incident_url = alert.incident.url,
+                    docs = alert.incident.documentation.content,
+                ))
+            }
+            GoogleWebhookPayload::GoogleUptimeAlert(alert) => Some(format!(
+                "{state} {alert} [incident]({incident_url})\n\n{summary}",
+                alert = alert.incident.policy_name,
+                incident_url = alert.incident.url,
+                summary = alert.incident.summary,
+                state = if alert.incident.state == "open" {
+                    "🚨"
+                } else {
+                    "✅"
                 },
-                GoogleWebhookPayload::GoogleUptimeAlert(alert) => {
-                    Some(format!(
-                        "{state} {alert} [incident]({incident_url})\n\n{summary}",
-                        alert = alert.incident.policy_name,
-                        incident_url = alert.incident.url,
-                        summary = alert.incident.summary,
-                        state = if alert.incident.state == "open" { "🚨" } else { "🧯" },
-                    ))
-                },
-            },
-            Err(err) => Some(format!(
-                "Failed to parse due to {error}:\n\n```\n{payload}\n```",
-                error = err,
-                payload = json.to_string()
             )),
-        }
+        },
+        Err(err) => Some(format!(
+            "Failed to parse due to {error}:\n\n```\n{payload}\n```",
+            error = err,
+            payload = json.to_string()
+        )),
+    }
 }
 
 async fn twist_content(req: &mut Request<State>) -> Option<String> {
