@@ -1,15 +1,56 @@
+use async_signal::{Signal, Signals};
+use async_std::io;
+use async_std::prelude::FutureExt;
+use async_std::stream::StreamExt;
+
 use tide::prelude::*;
 use tide::{Request, StatusCode};
 
-trait SaveLoad {
-    fn load(&mut self);
-    fn save(&self);
+use argh::FromArgs;
+
+// commands
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// GCP <-> Twist Webhook Bridge
+struct RunOpts {
+    #[argh(subcommand)]
+    nested: BridgeSubcommand,
 }
-trait RegisterFind {
-    fn register_twist_thread(&mut self, cfg: TwistOnConfigure);
-    fn find_twist_thread(&self, secret_id: String) -> Option<TwistIntegration>;
-    fn unregister_twist_thread(self: &mut Self, install_id: String);
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+enum BridgeSubcommand {
+    PrintReply(BridgeCmdPrintReply),
+    Serve(BridgeCmdServe),
 }
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "print-reply")]
+/// Print reply to webhook input.
+struct BridgeCmdPrintReply {
+    /// hostname of server
+    #[argh(option)]
+    input_filename: String,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "serve")]
+/// Run http server.
+struct BridgeCmdServe {
+    /// hostname of server
+    #[argh(option)]
+    server_name: String,
+
+    /// listener bind addr
+    #[argh(option, default = "\"127.0.0.1:9999\".to_string()")]
+    bind_addr: String,
+
+    /// database filename
+    #[argh(option, default = "\"db.json\".to_string()")]
+    db: String,
+}
+
+// application
 
 struct FileStore {
     path: String,
@@ -29,9 +70,7 @@ impl FileStore {
             twist_integrations: std::vec::Vec::new(),
         }
     }
-}
 
-impl SaveLoad for FileStore {
     fn load(self: &mut Self) {
         let data = std::fs::read_to_string(&self.path).unwrap();
         self.twist_integrations = serde_json::from_str(data.as_str()).unwrap();
@@ -41,8 +80,7 @@ impl SaveLoad for FileStore {
         let data = serde_json::to_string(&self.twist_integrations).unwrap();
         std::fs::write(&self.path, data).unwrap();
     }
-}
-impl RegisterFind for FileStore {
+
     fn register_twist_thread(self: &mut Self, cfg: TwistOnConfigure) {
         self.twist_integrations.push(TwistIntegration {
             secret_id: cfg.install_id.clone(),
@@ -74,18 +112,17 @@ impl RegisterFind for FileStore {
         }
     }
 }
-impl ApplicationStore for FileStore {}
 
-trait ApplicationStore: Send + SaveLoad + RegisterFind {}
+// tide server state
 
 #[derive(Clone)]
-struct State {
+struct ServerState {
     server_name: String,
-    store: std::sync::Arc<std::sync::Mutex<Box<dyn ApplicationStore>>>,
+    store: std::sync::Arc<std::sync::Mutex<FileStore>>,
 }
 
-impl State {
-    pub fn new(name: &str, store: Box<dyn ApplicationStore>) -> Self {
+impl ServerState {
+    pub fn new(name: &str, store: FileStore) -> Self {
         Self {
             server_name: name.to_string(),
             store: std::sync::Arc::new(std::sync::Mutex::new(store)),
@@ -93,13 +130,7 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TwistOnConfigure {
-    install_id: String,
-    post_data_url: String,
-    user_id: String,
-    user_name: String,
-}
+// google webhook structs
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -148,21 +179,29 @@ struct AlertDocumentation {
 }
 
 #[async_std::main]
-async fn main() -> tide::Result<()> {
-    // let data = async_std::fs::read_to_string("uptime.json").await?;
-    // if let Some(reply) = reply_to_json(data) {
-    //     println!("{}", reply);
-    // }
-    // return Ok(());
+async fn main() -> io::Result<()> {
+    let opts: RunOpts = argh::from_env();
+    return match opts.nested {
+        BridgeSubcommand::PrintReply(cmd) => {
+            let data = async_std::fs::read_to_string(cmd.input_filename).await?;
+            if let Some(reply) = reply_to_json(data) {
+                println!("{}", reply);
+            }
+            Ok(())
+        }
+        BridgeSubcommand::Serve(cmd) => serve(cmd).await,
+    };
+}
 
+async fn serve(opts: BridgeCmdServe) -> io::Result<()> {
     tide::log::start();
 
-    let mut file = FileStore::new("db.json");
+    let mut file = FileStore::new(&opts.db);
     file.load();
     file.twist_integrations
         .iter()
         .for_each(|x| tide::log::info!("> {} {}", x.secret_id, x.configuration.user_name));
-    let state = State::new("tuta.smeten.se", Box::new(file));
+    let state = ServerState::new(&opts.server_name, file);
 
     let mut app = tide::with_state(state);
 
@@ -177,11 +216,17 @@ async fn main() -> tide::Result<()> {
     app.at("/twist/on_configure").get(twist_configure);
     app.at("/twist/outgoing").post(twist_outgoing);
     app.at("/gcp/webhooks/:id").post(gcp_webhook);
-    app.listen("0.0.0.0:9999").await?;
 
-    tide::log::info!("byee!");
+    let quit = async {
+        let mut signals = Signals::new([Signal::Term, Signal::Quit, Signal::Int])?;
+        while let Some(sig) = signals.next().await {
+            eprintln!("quitting due to received signal: {:?}", sig);
+            return Ok(());
+        }
+        Ok(())
+    };
 
-    Ok(())
+    return app.listen(opts.bind_addr).race(quit).await;
 }
 
 fn reply_to_json(json: String) -> Option<String> {
@@ -225,14 +270,8 @@ fn reply_to_json(json: String) -> Option<String> {
     }
 }
 
-async fn twist_content(req: &mut Request<State>) -> Option<String> {
-    match req.body_string().await {
-        Ok(json) => reply_to_json(json),
-        Err(_) => None,
-    }
-}
-
-async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
+/// gcp webhook handler forwards a message to twist
+async fn gcp_webhook(mut req: Request<ServerState>) -> tide::Result {
     match twist_content(&mut req).await {
         Some(reply) => {
             let webhook_id = req.param("id")?;
@@ -256,17 +295,26 @@ async fn gcp_webhook(mut req: Request<State>) -> tide::Result {
     Ok("OK".into())
 }
 
-async fn twist_outgoing(mut req: Request<State>) -> tide::Result {
+async fn twist_content(req: &mut Request<ServerState>) -> Option<String> {
+    match req.body_string().await {
+        Ok(json) => reply_to_json(json),
+        Err(_) => None,
+    }
+}
+
+/// twist outgoing webhook
+async fn twist_outgoing(mut req: Request<ServerState>) -> tide::Result {
     #[derive(Debug, Deserialize)]
     struct Outgoing {
-        event_type: String, // message, thread, comment, uninstall, ping
+        /// message, thread, comment, uninstall, ping
+        event_type: String,
         user_id: String,
         user_name: String,
 
-        // only on message, thread or comment
+        /// only on message, thread or comment
         content: Option<String>,
 
-        // only when event_type = uninstall
+        /// only when event_type = uninstall
         install_id: Option<String>,
     }
 
@@ -302,7 +350,16 @@ async fn twist_outgoing(mut req: Request<State>) -> tide::Result {
     })
 }
 
-async fn twist_configure(req: Request<State>) -> tide::Result {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TwistOnConfigure {
+    install_id: String,
+    post_data_url: String,
+    user_id: String,
+    user_name: String,
+}
+
+/// twist configure/install integration handler
+async fn twist_configure(req: Request<ServerState>) -> tide::Result {
     let x: TwistOnConfigure = req.query()?;
     let state = req.state();
 
@@ -311,7 +368,7 @@ async fn twist_configure(req: Request<State>) -> tide::Result {
 
     tide::log::info!("configure for {} on {}", x.user_name, x.post_data_url);
 
-    let res = reqwest::blocking::Client::new()
+    let _res = reqwest::blocking::Client::new()
         .request(reqwest::Method::POST, x.post_data_url)
         .body(serde_json::to_vec(&json!({
             "content": "Hello from the other side.",
@@ -332,9 +389,9 @@ Twist configuration successful.
 # GCP Notification Channel
 Webhook URL: {}
 
-A hello message has been sent to your thread and will appear within 2 hours.
+A hello message has been sent to your thread and should appear per integration settings.
 
-GCP Notifications will be relayed in hourly batches.
+GCP Notifications will be show up in the thread as per integration settings.
 ",
         gcp_url
     )
