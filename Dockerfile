@@ -16,3 +16,4 @@ FROM gcr.io/distroless/cc-debian12 as release
 WORKDIR /app
 COPY --from=builder /app/target/release/twist-gcp-notify-channel ./twist-gcp-thread-bridge
 
+EXPOSE 9999

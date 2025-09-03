@@ -72,7 +72,8 @@ impl FileStore {
     }
 
     fn load(self: &mut Self) {
-        let data = std::fs::read_to_string(&self.path).unwrap();
+        let data = std::fs::read_to_string(&self.path).unwrap_or("[]".to_string());
+
         self.twist_integrations = serde_json::from_str(data.as_str()).unwrap();
     }
 
