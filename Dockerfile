@@ -17,3 +17,4 @@ WORKDIR /app
 COPY --from=builder /app/target/release/twist-gcp-notify-channel ./twist-gcp-thread-bridge
 
 EXPOSE 9999
+ENTRYPOINT ["/app/twist-gcp-thread-bridge"]
