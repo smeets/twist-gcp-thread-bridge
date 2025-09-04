@@ -215,6 +215,7 @@ async fn serve(opts: BridgeCmdServe) -> io::Result<()> {
     }));
 
     app.at("/ready").get(|_| async { Ok("OK") });
+    app.at("/ping").get(|_| async { Ok("PONG") });
     app.at("/twist/on_configure").get(twist_configure);
     app.at("/twist/outgoing").post(twist_outgoing);
     app.at("/gcp/webhooks/:id").post(gcp_webhook);
